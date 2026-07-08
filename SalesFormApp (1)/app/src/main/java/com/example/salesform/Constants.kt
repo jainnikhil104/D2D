@@ -10,7 +10,7 @@ object Constants {
 
     /**
      * Optional shared secret. If you set a matching value in the Apps Script
-     * (see README.md), only requests carrying this token will be accepted.
+     * (see README.md), only requests carrying th0is token will be accepted.
      * Leave blank to disable this check.
      */
     const val SHARED_SECRET = ""
