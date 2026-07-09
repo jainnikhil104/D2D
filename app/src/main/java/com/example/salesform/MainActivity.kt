@@ -49,6 +49,8 @@ class MainActivity : AppCompatActivity() {
         .connectTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -363,18 +365,40 @@ class MainActivity : AppCompatActivity() {
     private fun postJson(json: JSONObject): Result<Unit> {
         return try {
             val mediaType = "application/json; charset=utf-8".toMediaType()
-            val body = json.toString().toRequestBody(mediaType)
-            val request = Request.Builder()
-                .url(Constants.APPS_SCRIPT_URL)
-                .post(body)
-                .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    Result.success(Unit)
-                } else {
-                    Result.failure(IOException("Server returned ${response.code}"))
+            fun buildRequest(url: String) =
+                Request.Builder().url(url).post(json.toString().toRequestBody(mediaType)).build()
+
+            var response = client.newCall(buildRequest(Constants.APPS_SCRIPT_URL)).execute()
+
+            // Apps Script replies to POST with a 302 redirect to a
+            // script.googleusercontent.com URL. OkHttp's normal redirect
+            // handling would downgrade this to a GET and drop our JSON
+            // body, so we follow it manually here, re-POSTing the same
+            // body to the new URL.
+            var redirects = 0
+            while (response.isRedirect && redirects < 5) {
+                val location = response.header("Location")
+                response.close()
+                if (location == null) break
+                response = client.newCall(buildRequest(location)).execute()
+                redirects++
+            }
+
+            response.use { res ->
+                val text = res.body?.string().orEmpty()
+                if (!res.isSuccessful) {
+                    return Result.failure(IOException("Server returned ${res.code}"))
                 }
+                val resultJson = try {
+                    JSONObject(text)
+                } catch (e: Exception) {
+                    null
+                }
+                if (resultJson != null && !resultJson.optBoolean("ok", true)) {
+                    return Result.failure(IOException(resultJson.optString("error", "Unknown error")))
+                }
+                Result.success(Unit)
             }
         } catch (e: Exception) {
             Result.failure(e)
